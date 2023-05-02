@@ -1,0 +1,145 @@
+#!@GUILE@ \
+-e main --no-auto-compile
+!#
+
+(use-modules
+ ((greetd transport) #:prefix greetd:)
+ (greetd protocol)
+ (ice-9 getopt-long)
+ (ice-9 match)
+ (ice-9 readline)
+ (ice-9 regex)
+ (ice-9 string-fun)
+ (ice-9 textual-ports)
+ (srfi srfi-1)
+ (srfi srfi-26))
+
+(define %option-desc-list
+  `((help         (single-char #\h) (value #f))
+    (cmd          (single-char #\c) (value #t))
+    (max-failures (single-char #\f) (value #t)
+                  (predicate ,(cut string-match "^[0-9]+$" <>)))))
+
+(define (main args)
+  (define options (getopt-long args %option-desc-list))
+
+  (when (option-ref options 'help #f)
+    (show-help)
+    (exit 0))
+
+  (and=> (get-issue) display)
+
+  (let ((node (utsname:nodename (uname)))
+        (cmd (option-ref options 'cmd #f)))
+    (any (lambda _
+           (login node cmd))
+         (iota (string->number (option-ref options 'max-failures 5))))))
+
+(define (show-help)
+  (display "\
+Usage: agreety [OPTION]...
+
+Options:
+  -c, --cmd COMMAND   Set command to run on login.
+  -f, --max-failures FAILURES
+                      Set maximum attempts to login.
+  -h, --help          Show help.
+"))
+
+(define (login node command)
+  (define (read-username)
+    (match (readline (format #f "~a login: " node))
+      ((? eof-object?)
+       (newline)
+       (read-username))
+      ((? (cut string-prefix=? "!" <>))
+       (set! command (substring str 1))
+       (perr "Login command changed to: ~a~%" command)
+       (read-username))
+      (username
+       username)))
+
+  (define sock (and=> (getenv "GREETD_SOCK") greetd:connect))
+
+  (unless sock
+    (perr "error: $GREETD_SOCK is not set~%")
+    (exit 1))
+
+  (let loop ((starting? #f)
+             (next-request (create-session (read-username))))
+    (greetd:send sock next-request)
+    (match (greetd:recv! sock)
+      (($ <success>)
+       (or starting?
+           (loop #t
+                 (start-session (vector (or command
+                                            (readline "Command: ")))
+                                #()))))
+
+      (($ <error> type description)
+       (greetd:send sock (cancel-session))
+       (cond
+        ((string=? type "auth_error")
+         (perr "Login incorrect~%")
+         #f)
+        ((string=? type "error")
+         (perr "error: login error: ~a~%" description)
+         (exit 1))
+        (else
+         (perr "Unknown error type: ~s~%" type))))
+
+      (($ <auth-message> type prompt)
+       (loop starting?
+             (post-auth-message-response
+              (cond
+               ((member type '("error" "info"))
+                (perr "~a: ~a" type prompt)
+                *unspecified*)
+               ((string=? type "visible")
+                (readline prompt))
+               ((string=? type "secret")
+                (getpass prompt))
+               (else
+                (perr "Unknown auth message type: ~s~%" type)
+                *unspecified*))))))))
+
+(define (perr format-string . args)
+  (apply format (current-error-port) format-string args))
+
+(define (get-issue)
+  (if (file-exists? "/etc/issue")
+      (let ((vtnr (or (getenv "XDG_VTNR") "0"))
+            (uts (uname)))
+        (alist-substitute
+         `(("\\S" . ,(or (get-distro-name) "Linux"))
+           ("\\\\" . "\\")
+           ("\\l" . ,(string-append "tty" vtnr))
+           ("\\m" . ,(utsname:machine uts))
+           ("\\n" . ,(utsname:nodename uts))
+           ("\\s" . ,(utsname:sysname uts))
+           ("\\v" . ,(utsname:version uts)))
+         (call-with-input-file "/etc/issue" get-string-all)))
+      #f))
+
+(define (alist-substitute alist string)
+  (define (item match)
+    (assoc-ref alist (match:substring match)))
+  (let ((regexp (string-join (map (compose regexp-quote car) alist) "|")))
+    (regexp-substitute/global #f regexp string 'pre item 'post)))
+
+(define (get-distro-name)
+  (define (loop port)
+    (match (get-line port)
+      ((? eof-object?)
+       #f)
+      ((? (cut string-prefix=? "PRETTY_NAME=" <>) line)
+       (string-trim-both (substring line 12) #\"))
+      (_
+       (loop port))))
+  (if (file-exists? "/etc/os-release")
+      (call-with-input-file "/etc/os-release" loop)
+      #f))
+
+;; Local Variables:
+;; mode: scheme
+;; End:

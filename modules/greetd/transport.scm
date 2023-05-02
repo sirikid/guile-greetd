@@ -1,0 +1,31 @@
+(define-module (greetd transport)
+  #:use-module ((guile) #:prefix posix: #:select (connect send recv!))
+  #:use-module (greetd protocol)
+  #:use-module (json)
+  #:use-module (rnrs bytevectors)
+  #:export (connect send recv!))
+
+(define (u32->bv x)
+  (uint-list->bytevector (list x) (native-endianness) 4))
+
+(define (bv->u32 x)
+  (bytevector-u32-native-ref x 0))
+
+(define (connect path)
+  (let ((sock (socket PF_UNIX SOCK_STREAM 0)))
+    (posix:connect sock AF_UNIX path)
+    sock))
+
+(define (send sock message)
+  (let* ((data (string->utf8 (scm->json-string (request->scm message))))
+         (len (u32->bv (bytevector-length data))))
+    (posix:send sock len)
+    (posix:send sock data)))
+
+(define (recv! sock)
+  (let ((len (make-bytevector 4))
+        (data #f))
+    (posix:recv! sock len)
+    (set! data (make-bytevector (bv->u32 len)))
+    (posix:recv! sock data)
+    (scm->response (json-string->scm (utf8->string data)))))

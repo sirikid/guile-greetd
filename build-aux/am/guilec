@@ -1,0 +1,8 @@
+# -*- makefile -*-
+# Borrowed from Guile-SMC
+
+GUILEC = $(GUILD) compile
+
+AM_V_GUILEC = $(AM_V_GUILEC_$(V))
+AM_V_GUILEC_ = $(AM_V_GUILEC_$(AM_DEFAULT_VERBOSITY))
+AM_V_GUILEC_0 = @echo "  GUILEC  " $@;
