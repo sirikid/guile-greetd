@@ -18,6 +18,7 @@ jobs:
               autoconf \
               automake \
               guile-3.0 \
+              guile-3.0-dev \
               guile-json \
 
       - uses: actions/checkout@v2
