@@ -2,7 +2,7 @@ AC_INIT([Guile-Greetd], [0.1.2], [https://github.com/sirikid/guile-greetd/issues
 
 AM_INIT_AUTOMAKE([gnu -Wall -Wno-portability])
 
-GUILE_PKG([3.0 2.2])
+GUILE_PKG([3.0])
 GUILE_PROGS
 GUILE_SITE_DIR
 
